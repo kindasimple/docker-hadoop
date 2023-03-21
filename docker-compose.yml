@@ -1,9 +1,73 @@
 version: "3"
 
 services:
+
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   target: submit
+    container_name: historyserver
+    # not able to run arm image presently
+    platform: linux/amd64
+    healthcheck:
+      test: curl -f http://localhost:8188/ || exit 1
+    ports:
+      - "8188"
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
+      YARN_CONF_yarn_timeline___service_leveldb___timeline___store_path: /hadoop/yarn/timeline
+    volumes:
+      - hadoop_historyserver:/hadoop/yarn/timeline
+      - ./scripts:/scripts
+    env_file:
+      - ./hadoop.env
+    command: /scripts/run_historyserver.sh
+
+  setup:
+    image: hadoop_local
+    container_name: setup
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: submit
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+      - hadoop_datanode:/hadoop/dfs/data
+      - hadoop_historyserver:/hadoop/yarn/timeline
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - namenode
+      - datanode
+      - resourcemanager
+      - nodemanager
+      - historyserver
+    command: /scripts/wordcount_setup.sh
+
+  submit:
+    image: hadoop_local
+    container_name: submit
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+      - hadoop_datanode:/hadoop/dfs/data
+      - hadoop_historyserver:/hadoop/yarn/timeline
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - namenode
+      - datanode
+      - resourcemanager
+      - nodemanager
+      - historyserver
+
   namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
+    image: hadoop_local
+    healthcheck:
+      test: curl -f http://localhost:9870/ || exit 1
     restart: always
     ports:
       - 9870:9870
@@ -11,50 +75,59 @@ services:
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
     environment:
-      - CLUSTER_NAME=test
+      CLUSTER_NAME: test
+      HDFS_CONF_dfs_namenode_name_dir: file:///hadoop/dfs/name
     env_file:
       - ./hadoop.env
+    command: /scripts/run_namenode.sh
 
   datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode
+    image: hadoop_local
+    healthcheck:
+      test: curl -f http://localhost:9864/ || exit 1
     restart: always
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
+    ports:
+      - 9864:9864
     environment:
       SERVICE_PRECONDITION: "namenode:9870"
+      HDFS_CONF_dfs_datanode_data_dir: "file:///hadoop/dfs/data"
     env_file:
       - ./hadoop.env
-  
+    command: scripts/run_datanode.sh
+
   resourcemanager:
-    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
     container_name: resourcemanager
+    image: hadoop_local
+    healthcheck:
+      test: curl -f http://localhost:8088/ || exit 1
     restart: always
+    ports:
+      - "8088:8088"
     environment:
       SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864"
     env_file:
       - ./hadoop.env
+    command: /scripts/run_resourcemanager.sh
 
-  nodemanager1:
-    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+  nodemanager:
     container_name: nodemanager
+    image: hadoop_local
+    healthcheck:
+      test: curl -f http://localhost:8042/ || exit 1
+    ports:
+      - "8042"
     restart: always
     environment:
       SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
     env_file:
       - ./hadoop.env
-  
-  historyserver:
-    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
-    container_name: historyserver
-    restart: always
-    environment:
-      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088"
-    volumes:
-      - hadoop_historyserver:/hadoop/yarn/timeline
-    env_file:
-      - ./hadoop.env
-  
+    command: /scripts/run_nodemanager.sh
+
+
+
 volumes:
   hadoop_namenode:
   hadoop_datanode:
